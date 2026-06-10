@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "images": [
+    {
+      "path": "/home/jpleona/jpleona_c/gesturepractice/test/fixtures/pose_standing.png",
+      "tags": [
+        "figure",
+        "standing"
+      ]
+    },
+    {
+      "path": "/home/jpleona/jpleona_c/gesturepractice/test/fixtures/pose_seated.png",
+      "tags": [
+        "figure",
+        "seated"
+      ]
+    },
+    {
+      "path": "/home/jpleona/jpleona_c/gesturepractice/test/fixtures/hands_study.png",
+      "tags": [
+        "hands"
+      ]
+    }
+  ]
+}
