@@ -7,7 +7,6 @@ assert on real Qt behaviour.
 """
 
 import importlib
-import json
 import os
 import sys
 import types
@@ -34,6 +33,7 @@ def _make_fake_krita():
 
     mod.DockWidget = DockWidget
     mod.Krita = MagicMock(name="Krita")
+    mod.InfoObject = MagicMock(name="InfoObject")
     mod.DockWidgetFactory = MagicMock(name="DockWidgetFactory")
     mod.DockWidgetFactoryBase = MagicMock(name="DockWidgetFactoryBase")
     return mod
@@ -64,18 +64,10 @@ def _install_fakes(qt_prefix):
     return importlib.import_module("gesturepractice.gesture_docker")
 
 
-def _write_manifest(tmp_path):
-    data = {
-        "version": 1,
-        "images": [
-            {"path": "/x/a.jpg", "tags": ["figure"]},
-            {"path": "/x/b.jpg", "tags": ["figure"]},
-            {"path": "/x/c.jpg", "tags": ["figure"]},
-        ],
-    }
-    p = tmp_path / "m.json"
-    p.write_text(json.dumps(data), encoding="utf-8")
-    return str(p)
+def _make_image_dir(tmp_path):
+    for name in ("a.jpg", "b.jpg", "c.jpg"):
+        (tmp_path / name).write_bytes(b"")
+    return str(tmp_path)
 
 
 @pytest.mark.parametrize("qt_prefix", ["PyQt6", "PyQt5"])
@@ -91,7 +83,7 @@ def test_advance_drives_session(qt_prefix, tmp_path):
     mod = _install_fakes(qt_prefix)
     docker = mod.GestureDocker()
 
-    ok = docker.load_manifest(_write_manifest(tmp_path), seed=0)
+    ok = docker.load_directory(_make_image_dir(tmp_path), seed=0)
     assert ok is True
     assert docker._session is not None
     assert docker._session.total == 3
@@ -107,11 +99,11 @@ def test_advance_drives_session(qt_prefix, tmp_path):
 
 
 @pytest.mark.parametrize("qt_prefix", ["PyQt6", "PyQt5"])
-def test_load_bad_manifest_is_safe(qt_prefix, tmp_path):
+def test_load_empty_dir_is_safe(qt_prefix, tmp_path):
     mod = _install_fakes(qt_prefix)
     docker = mod.GestureDocker()
-    bad = tmp_path / "bad.json"
-    bad.write_text("{nope", encoding="utf-8")
-    ok = docker.load_manifest(str(bad))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    ok = docker.load_directory(str(empty))  # no images inside
     assert ok is False
     assert docker._session is None  # stays unloaded, no exception escapes

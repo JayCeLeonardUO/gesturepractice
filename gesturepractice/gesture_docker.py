@@ -22,6 +22,7 @@ try:  # Krita 6.0
         QPushButton,
         QSpinBox,
         QCheckBox,
+        QProgressBar,
         QFileDialog,
     )
     from PyQt6.QtCore import QTimer, Qt
@@ -39,6 +40,7 @@ except ImportError:  # Krita 5.3
         QPushButton,
         QSpinBox,
         QCheckBox,
+        QProgressBar,
         QFileDialog,
     )
     from PyQt5.QtCore import QTimer, Qt
@@ -70,7 +72,14 @@ class GestureDocker(DockWidget):
         self._output_dir = None  # where auto-saved JPGs go
         self._view = None  # the Krita view we opened for the current pose
 
+        self._interval = 60  # seconds per pose, captured when a pose begins
+        self._remaining = 0  # seconds left on the current pose
+        self._waiting_for_draw = False  # countdown frozen until first stroke
+
+        # Ticks once per second to drive the visible countdown (and, while
+        # "start on first stroke" is on, to poll for the first brush stroke).
         self._timer = QTimer(self)
+        self._timer.setInterval(1000)
         self._timer.timeout.connect(self._on_tick)
 
         self._build_ui()
@@ -92,6 +101,13 @@ class GestureDocker(DockWidget):
         self._status_label.setAlignment(_ALIGN_CENTER)
         layout.addWidget(self._status_label)
 
+        self._countdown = QProgressBar()
+        self._countdown.setAlignment(_ALIGN_CENTER)
+        self._countdown.setRange(0, 1)
+        self._countdown.setValue(0)
+        self._countdown.setFormat("")
+        layout.addWidget(self._countdown)
+
         interval_row = QHBoxLayout()
         interval_row.addWidget(QLabel("Seconds / pose:"))
         self._interval_spin = QSpinBox()
@@ -111,6 +127,9 @@ class GestureDocker(DockWidget):
         self._output_btn = QPushButton("Auto-save folder…")
         self._output_btn.clicked.connect(self._on_choose_output)
         layout.addWidget(self._output_btn)
+
+        self._wait_draw_check = QCheckBox("Timer starts on first stroke")
+        layout.addWidget(self._wait_draw_check)
 
         button_row = QHBoxLayout()
         self._start_btn = QPushButton("Start")
@@ -162,18 +181,20 @@ class GestureDocker(DockWidget):
             self._status_label.setText("Load a folder first.")
             return
         self._show_current()
-        self._timer.start(self._interval_spin.value() * 1000)
+        self._begin_pose()
+        self._timer.start()
         self._refresh_controls()
 
     def _on_pause(self):
         if self._timer.isActive():
             self._timer.stop()
         elif self._session is not None:
-            self._timer.start(self._interval_spin.value() * 1000)
+            self._timer.start()
         self._refresh_controls()
 
     def _on_next(self):
         self.advance()
+        self._begin_pose()
 
     def _on_stop(self):
         self._timer.stop()
@@ -181,10 +202,63 @@ class GestureDocker(DockWidget):
         self._session = None
         self._image_label.setText("Session stopped.")
         self._status_label.setText("")
+        self._reset_countdown()
         self._refresh_controls()
 
     def _on_tick(self):
-        self.advance()
+        """Fires once per second while running."""
+        if self._session is None:
+            return
+        # "Start on first stroke": hold the countdown until the user draws.
+        if self._waiting_for_draw:
+            if self._has_drawing():
+                self._waiting_for_draw = False
+                self._update_countdown()
+            return
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self.advance()
+            self._begin_pose()
+        else:
+            self._update_countdown()
+
+    # -- countdown ----------------------------------------------------------
+
+    def _begin_pose(self):
+        """Arm the countdown for the pose now showing."""
+        self._interval = self._interval_spin.value()
+        self._remaining = self._interval
+        self._waiting_for_draw = self._wait_draw_check.isChecked()
+        self._update_countdown()
+
+    def _update_countdown(self):
+        self._countdown.setRange(0, self._interval)
+        self._countdown.setValue(self._remaining)
+        if self._waiting_for_draw:
+            self._countdown.setFormat("Draw to start the timer…")
+        else:
+            self._countdown.setFormat("%v s")
+
+    def _reset_countdown(self):
+        self._waiting_for_draw = False
+        self._remaining = 0
+        self._countdown.setRange(0, 1)
+        self._countdown.setValue(0)
+        self._countdown.setFormat("")
+
+    def _has_drawing(self):
+        """True once the user has laid down a stroke on the current canvas.
+
+        Krita flags a document ``modified()`` the moment its pixels change, so
+        a freshly created (untouched) pose reads False until the first stroke.
+        """
+        doc = self._view
+        if doc is None:
+            return False
+        try:
+            return bool(doc.modified())
+        except Exception:
+            return False
 
     # -- session-driven logic ----------------------------------------------
 
