@@ -99,6 +99,17 @@ def test_advance_drives_session(qt_prefix, tmp_path):
 
 
 @pytest.mark.parametrize("qt_prefix", ["PyQt6", "PyQt5"])
+def test_load_records_recent_folder(qt_prefix, tmp_path):
+    mod = _install_fakes(qt_prefix)
+    docker = mod.GestureDocker()
+    assert docker._recents == []  # nothing remembered yet (Krita mock => empty)
+
+    folder = _make_image_dir(tmp_path)
+    docker.load_directory(folder, seed=0)
+    assert os.path.normpath(folder) in docker._recents
+
+
+@pytest.mark.parametrize("qt_prefix", ["PyQt6", "PyQt5"])
 def test_load_empty_dir_is_safe(qt_prefix, tmp_path):
     mod = _install_fakes(qt_prefix)
     docker = mod.GestureDocker()

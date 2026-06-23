@@ -55,6 +55,14 @@ import os
 from krita import DockWidget, Krita, InfoObject
 
 from .session import Session, ManifestError
+from .recent import (
+    SETTINGS_GROUP,
+    SETTINGS_KEY,
+    parse_recents,
+    serialize_recents,
+    add_recent,
+    existing_recents,
+)
 
 DOCKER_ID = "gesturePractice"
 DOCKER_TITLE = "Gesture Practice"
@@ -82,7 +90,13 @@ class GestureDocker(DockWidget):
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._on_tick)
 
+        # Most-recently-loaded folders, restored from Krita's settings store so
+        # they survive a restart. Offered as quick-load buttons while idle.
+        self._recents = self._load_recents()
+        self._recent_buttons = []
+
         self._build_ui()
+        self._rebuild_recents()
         self._refresh_controls()
 
     # -- UI construction ----------------------------------------------------
@@ -96,6 +110,17 @@ class GestureDocker(DockWidget):
         self._image_label.setMinimumSize(200, 200)
         self._image_label.setScaledContents(False)
         layout.addWidget(self._image_label, stretch=1)
+
+        # Shown in the image's place while no folder is loaded: a header plus
+        # one quick-load button per recent folder. _rebuild_recents() inserts
+        # the buttons between the header and the trailing stretch.
+        self._recent_panel = QWidget()
+        self._recent_layout = QVBoxLayout(self._recent_panel)
+        self._recent_header = QLabel("No folder loaded.")
+        self._recent_header.setAlignment(_ALIGN_CENTER)
+        self._recent_layout.addWidget(self._recent_header)
+        self._recent_layout.addStretch(1)
+        layout.addWidget(self._recent_panel, stretch=1)
 
         self._status_label = QLabel("")
         self._status_label.setAlignment(_ALIGN_CENTER)
@@ -260,6 +285,62 @@ class GestureDocker(DockWidget):
         except Exception:
             return False
 
+    # -- recent folders -----------------------------------------------------
+
+    def _load_recents(self):
+        """Read the MRU list back from Krita's settings store (never throws)."""
+        try:
+            raw = Krita.instance().readSetting(SETTINGS_GROUP, SETTINGS_KEY, "")
+        except Exception:
+            return []
+        return parse_recents(raw)
+
+    def _save_recents(self):
+        """Persist the MRU list to Krita's settings store (never throws)."""
+        try:
+            Krita.instance().writeSetting(
+                SETTINGS_GROUP, SETTINGS_KEY, serialize_recents(self._recents)
+            )
+        except Exception:
+            pass
+
+    def _remember_folder(self, path):
+        """Promote ``path`` to the front of the MRU, persist, and refresh."""
+        self._recents = add_recent(self._recents, path)
+        self._save_recents()
+        self._rebuild_recents()
+
+    def _rebuild_recents(self):
+        """Repopulate the quick-load buttons from the (existing) MRU folders."""
+        for btn in self._recent_buttons:
+            btn.setParent(None)
+        self._recent_buttons = []
+
+        folders = existing_recents(self._recents)
+        self._recent_header.setText(
+            "Recent folders" if folders else "No folder loaded."
+        )
+        for path in folders:
+            label = os.path.basename(os.path.normpath(path)) or path
+            btn = QPushButton(label)
+            btn.setToolTip(path)
+            # Default-arg captures this iteration's path; the leading slot
+            # absorbs the bool the clicked signal passes.
+            btn.clicked.connect(
+                lambda _checked=False, p=path: self.load_directory(p)
+            )
+            # Insert before the trailing stretch so buttons hug the top.
+            self._recent_layout.insertWidget(
+                self._recent_layout.count() - 1, btn
+            )
+            self._recent_buttons.append(btn)
+
+    def _update_display_mode(self):
+        """Show recent-folder buttons while idle; the reference once loaded."""
+        show_recents = self._session is None
+        self._recent_panel.setVisible(show_recents)
+        self._image_label.setVisible(not show_recents)
+
     # -- session-driven logic ----------------------------------------------
 
     def load_directory(self, path, seed=None):
@@ -273,6 +354,7 @@ class GestureDocker(DockWidget):
             self._refresh_controls()
             return False
         self._folder_path = path
+        self._remember_folder(path)
         self._image_label.setText("Loaded {} poses. Press Start.".format(
             self._session.total))
         self._refresh_controls()
@@ -390,3 +472,4 @@ class GestureDocker(DockWidget):
         self._next_btn.setEnabled(has_session)
         self._stop_btn.setEnabled(has_session)
         self._pause_btn.setText("Pause" if running else "Resume")
+        self._update_display_mode()
